@@ -6,43 +6,57 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static com.RUStore.Protocol.*;
 
 public class RUStoreServer {
-    ConcurrentMap<String, byte[]> map = new ConcurrentHashMap<>();
+    private final Thread dispatcher;
+    private final ExecutorService threadPool = Executors.newCachedThreadPool();
+    private final ServerSocket serverSocket;
+    private final Set<Socket> connectedSockets = ConcurrentHashMap.newKeySet();
+    private final Map<String, byte[]> map = new ConcurrentHashMap<>();
 
-    public static void main(String[] arguments) throws InterruptedException {
-        if (arguments.length != 1) {
-            System.out.println("Invalid number of arguments. You must provide a port number.");
-            return;
-        }
-        int port = Integer.parseInt(arguments[0]);
-        new RUStoreServer().run(port);
+    public RUStoreServer(int port) throws IOException {
+        this.serverSocket = new ServerSocket(port);
+        dispatcher = new Thread(() -> {
+            try {
+                while (true) {
+                    System.out.println("There are " + this.getActiveConnections() + " connection(s) to this server.");
+                    Socket clientSocket = serverSocket.accept();
+                    connectedSockets.add(clientSocket);
+                    threadPool.submit(new ClientTask(clientSocket));
+                }
+            } catch (IOException ignored) {
+                System.out.println("Dispatcher terminated!");
+            }
+        });
     }
 
-    public void run(int port) throws InterruptedException {
-        final ExecutorService clientProcessingPool = Executors.newFixedThreadPool(10);
-        Thread serverThread = new Thread(() -> {
+    public int getActiveConnections() {
+        return connectedSockets.size();
+    }
+
+    public void connect() {
+        System.out.println("Waiting for clients to connect...");
+        dispatcher.start();
+    }
+
+    public void disconnect() throws IOException, InterruptedException {
+        connectedSockets.forEach(socket -> {
+            System.out.println("Closing socket coming from port " + socket.getPort());
             try {
-                ServerSocket serverSocket = new ServerSocket(port);
-                System.out.println("Waiting for clients to connect...");
-                while (true) {
-                    Socket clientSocket = serverSocket.accept();
-                    clientProcessingPool.submit(new ClientTask(clientSocket));
-                }
+                socket.close();
             } catch (IOException e) {
-                System.err.println("Unable to process client request");
                 throw new RuntimeException(e);
             }
         });
-        serverThread.start();
+        threadPool.shutdownNow();
+        serverSocket.close();
+        dispatcher.join();
     }
 
     private class ClientTask implements Runnable {
@@ -56,77 +70,114 @@ public class RUStoreServer {
             this.out = new DataOutputStream(clientSocket.getOutputStream());
         }
 
-        private void handlePut(String key, byte[] data) throws IOException {
-            System.out.println("Putting!!");
+        private void put(String key) throws IOException {
             if (map.containsKey(key)) {
-                out.writeInt(1);
+                out.writeBoolean(true);
+                System.out.println("Key `" + key + "` already exists.");
                 return;
             }
+            out.writeBoolean(false);
+            boolean dataExists = in.readBoolean();
+            if (!dataExists) {
+                System.out.println("Client could not retrieve the data.");
+                return;
+            }
+            int dataLength = in.readInt();
+            byte[] data = in.readNBytes(dataLength);
             map.put(key, data);
-            out.writeInt(0);
+            System.out.println("Entry `" + key + "` successfully inserted.");
         }
 
-        private void handleGet(String key) throws IOException {
-            System.out.println("Getting!");
+        private void get(String key) throws IOException {
             if (!map.containsKey(key)) {
-                out.writeInt(0);
+                out.writeInt(-1);
+                System.out.println("Key `" + key + "` does not exist.");
                 return;
             }
             byte[] data = map.get(key);
             out.writeInt(data.length);
             out.write(data);
+            System.out.println("Value retrieved successfully!");
         }
 
-        private void handleList() throws IOException {
+        private void remove(String key) throws IOException {
+            if (!map.containsKey(key)) {
+                out.writeInt(1);
+                System.out.println("Key `" + key + "` does not exist.");
+                return;
+            }
+            map.remove(key);
+            out.writeInt(0);
+            System.out.println("Entry `" + key + "` successfully removed.");
+        }
+
+        private void list() throws IOException {
             List<String> strings = new ArrayList<>(map.keySet());
+            System.out.println("Keys: " + strings);
             out.writeInt(strings.size());
             for (String s : strings) out.writeUTF(s);
         }
 
         @Override
         public void run() {
-            System.out.println("Got a client !");
-
+            System.out.println("Connected to client from port " + clientSocket.getPort() + ".");
             try {
-
                 while (true) {
-                    int methodNumber = in.readInt();
-
-                    if (methodNumber == LIST.methodNumber()) {
-                        handleList();
+                    int method = in.readInt();
+                    if (LIST.equals(method)) {
+                        list();
                         continue;
                     }
-
-
                     String key = in.readUTF();
-
-                    if (methodNumber == GET.methodNumber()) {
-                        handleGet(key);
+                    if (GET.equals(method)) {
+                        get(key);
                         continue;
                     }
-
-                    int dataLength = in.readInt();
-                    byte[] data = in.readNBytes(dataLength);
-
-                    if (methodNumber == PUT.methodNumber()) {
-                        handlePut(key, data);
+                    if (REMOVE.equals(method)) {
+                        remove(key);
                         continue;
                     }
-                    System.out.println("Received: " + methodNumber);
+                    if (PUT.equals(method)) {
+                        put(key);
+                    }
                 }
-
             } catch (EOFException e) {
-                System.out.println("Client disconnected.");
+                System.out.println("Client from port " + clientSocket.getPort() + " disconnected!");
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
             try {
                 clientSocket.close();
+                connectedSockets.remove(clientSocket);
                 System.out.println("Thread closed!");
+
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }
     }
 
+    public static void runServer(int port) throws IOException, InterruptedException {
+        RUStoreServer server = new RUStoreServer(port);
+        System.out.println("Type exit to terminate the server.");
+        server.connect();
+        Scanner scanner = new Scanner(System.in);
+        while (true) {
+            String input = scanner.nextLine();
+            if (input.equals("exit")) {
+                server.disconnect();
+                scanner.close();
+                return;
+            }
+        }
+    }
+
+    public static void main(String[] arguments) throws IOException, InterruptedException {
+        if (arguments.length != 1) {
+            System.out.println("Invalid number of arguments. You must provide a port number.");
+            return;
+        }
+        int port = Integer.parseInt(arguments[0]);
+        runServer(port);
+    }
 }

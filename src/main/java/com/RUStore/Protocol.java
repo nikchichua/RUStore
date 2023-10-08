@@ -2,8 +2,10 @@ package com.RUStore;
 
 public enum Protocol {
     LIST(0),
-    PUT(1),
-    GET(3);
+    GET(1),
+    REMOVE(2),
+    PUT(3);
+
     private final int methodNumber;
 
     Protocol(int num) {
@@ -12,5 +14,9 @@ public enum Protocol {
 
     public int methodNumber() {
         return methodNumber;
+    }
+
+    public boolean equals(int methodNumber) {
+        return this.methodNumber() == methodNumber;
     }
 }
