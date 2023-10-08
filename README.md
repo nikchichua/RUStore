@@ -72,9 +72,8 @@ for the number of bytes is assigned-1letting the client know about the unsuccess
 This method is exactly the same asbyte[] get(String key)on the server side, but has a slight variation for the
 client side. Instead of returning the retrieved bytes, the method writes them to the file specified by thefilepath
 variable.
-'''
+
 ### 4.4 int put(String key, byte[] data)
-'''
 
 After sending the identifier and the key, the client then awaits for a response from the server which checks whether
 the key provided, already exists or not. The client is notified of this information and if the key exists, it returns 1 ,
