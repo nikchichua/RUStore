@@ -5,17 +5,15 @@ pairs for simple insertion and retrieval. Essentially a string data type to byte
 the keys are strings used to identify which object corresponds to which key. The following three-step process was
 used to implement this architecture:
 
-```
+
 (1) Designing data structures to make sure multiple clients are able to utilize efficient storage and retrieval of
 objects.
-```
-```
+
 (2) Making sure that reliable connection is established between the client and the server, accommodating clients
 concurrently.
-```
-```
+
 (3) Creating a protocol to enable coherent communication standards between the two end points of connection.
-```
+
 ## 2 Data Structures
 
 The main data structure that was used for this project was Concurrent Hash Map. This was used in order to ensure
